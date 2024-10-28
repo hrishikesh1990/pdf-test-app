@@ -1,0 +1,171 @@
+<div class="analysis-container">
+  <h1>PDF Analysis Results</h1>
+  
+  <div class="file-info">
+    <h2>File Information</h2>
+    <p><strong>Filename:</strong> <%= @analysis_data["filename"] %></p>
+    <p><strong>Analyzed at:</strong> <%= @analysis_data["timestamp"] %></p>
+  </div>
+
+  <div class="results-tabs">
+    <button class="tab-button active" onclick="showTab('links')">Links Found</button>
+    <button class="tab-button" onclick="showTab('logs')">Analysis Logs</button>
+  </div>
+
+  <div id="links-tab" class="tab-content active">
+    <% if @analysis_data["links"].present? %>
+      <h3>Found <%= @analysis_data["links"].length %> links:</h3>
+      <% @analysis_data["links"].each do |link| %>
+        <div class="link-item">
+          <p><strong>Page:</strong> <%= link["page"] %></p>
+          <p><strong>Type:</strong> <%= link["type"] %></p>
+          <p><strong>URL:</strong> 
+            <% if link["uri"] =~ URI::regexp || link["uri"].start_with?('mailto:') %>
+              <%= link_to link["uri"], link["uri"], target: '_blank', rel: 'noopener' %>
+            <% else %>
+              <%= link["uri"] %>
+            <% end %>
+          </p>
+          <% if link["rect"] %>
+            <p><strong>Position:</strong> <%= link["rect"].inspect %></p>
+          <% end %>
+        </div>
+      <% end %>
+    <% else %>
+      <p class="no-results">No links were found in the document.</p>
+    <% end %>
+  </div>
+
+  <div id="logs-tab" class="tab-content">
+    <div class="analysis-logs">
+      <% @analysis_data["logs"].each do |log| %>
+        <div class="log-entry log-<%= log["level"] %>">
+          <span class="timestamp"><%= log["timestamp"] %></span>
+          <span class="message"><%= log["message"] %></span>
+        </div>
+      <% end %>
+    </div>
+  </div>
+
+  <div class="actions">
+    <%= link_to 'Analyze Another PDF', new_pdf_path, class: 'button' %>
+  </div>
+</div>
+
+<% content_for :head do %>
+  <style>
+    .analysis-container {
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    .file-info {
+      background: #f8f9fa;
+      padding: 15px;
+      border-radius: 4px;
+      margin-bottom: 20px;
+    }
+
+    .results-tabs {
+      margin-bottom: 20px;
+      border-bottom: 2px solid #dee2e6;
+    }
+
+    .tab-button {
+      padding: 10px 20px;
+      border: none;
+      background: none;
+      cursor: pointer;
+      margin-right: 10px;
+    }
+
+    .tab-button.active {
+      border-bottom: 2px solid #007bff;
+      color: #007bff;
+    }
+
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    .log-entry {
+      padding: 8px;
+      margin: 4px 0;
+      border-radius: 4px;
+      font-family: monospace;
+    }
+
+    .log-info {
+      background: #f8f9fa;
+    }
+
+    .log-error {
+      background: #fff3f3;
+      color: #dc3545;
+    }
+
+    .log-warn {
+      background: #fff3cd;
+      color: #856404;
+    }
+
+    .timestamp {
+      color: #666;
+      margin-right: 10px;
+      font-weight: bold;
+    }
+
+    .link-item {
+      border: 1px solid #dee2e6;
+      padding: 15px;
+      margin: 10px 0;
+      border-radius: 4px;
+      background: #fff;
+    }
+
+    .button {
+      display: inline-block;
+      padding: 10px 20px;
+      background-color: #007bff;
+      color: white;
+      text-decoration: none;
+      border-radius: 4px;
+      margin-top: 20px;
+    }
+
+    .button:hover {
+      background-color: #0056b3;
+      text-decoration: none;
+      color: white;
+    }
+
+    .no-results {
+      padding: 20px;
+      background: #f8f9fa;
+      border-radius: 4px;
+      text-align: center;
+      color: #666;
+    }
+  </style>
+
+  <script>
+    function showTab(tabName) {
+      // Hide all tabs
+      document.querySelectorAll('.tab-content').forEach(tab => {
+        tab.classList.remove('active');
+      });
+      document.querySelectorAll('.tab-button').forEach(button => {
+        button.classList.remove('active');
+      });
+      
+      // Show selected tab
+      document.getElementById(tabName + '-tab').classList.add('active');
+      event.target.classList.add('active');
+    }
+  </script>
+<% end %>

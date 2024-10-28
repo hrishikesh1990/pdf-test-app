@@ -1,0 +1,21 @@
+<h1>PDF Links Analysis</h1>
+
+<% if @links.present? %>
+  <h2>Found <%= @links.length %> links:</h2>
+  
+  <% @links.each do |link| %>
+    <div class="link-item">
+      <p>Page: <%= link[:page] %></p>
+      <p>URL: <%= link[:uri] %></p>
+      <p>Position: <%= link[:rect].inspect %></p>
+      <hr>
+    </div>
+  <% end %>
+<% else %>
+  <p>Please upload a PDF file to analyze.</p>
+  
+  <%= form_tag analyze_links_pdfs_path, multipart: true do %>
+    <%= file_field_tag :pdf %>
+    <%= submit_tag "Analyze PDF" %>
+  <% end %>
+<% end %>

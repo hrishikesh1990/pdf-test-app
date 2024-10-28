@@ -1,0 +1,24 @@
+<h1>Upload PDF for Link Analysis</h1>
+
+<%= form_with(url: analyze_links_pdfs_path, method: :post, local: true, multipart: true) do |f| %>
+  <div class="field">
+    <%= f.label :pdf, 'Select PDF File' %>
+    <%= f.file_field :pdf, 
+                     accept: 'application/pdf', 
+                     required: true,
+                     data: { 
+                       controller: "file-upload",
+                       action: "change->file-upload#validateFile" 
+                     } %>
+  </div>
+
+  <div class="actions">
+    <%= f.submit "Analyze PDF Links", class: 'submit-button' %>
+  </div>
+
+  <% if flash[:error] %>
+    <div class="error">
+      <%= flash[:error] %>
+    </div>
+  <% end %>
+<% end %>

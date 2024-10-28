@@ -1,0 +1,45 @@
+<div class="pdf-analysis">
+  <h1>PDF Link Analysis Results</h1>
+
+  <% if @links.present? %>
+    <div class="results-summary">
+      <h2>Found <%= @links.length %> links in the document</h2>
+    </div>
+
+    <div class="results-detail">
+      <% @links.group_by { |link| link[:type] }.each do |type, links| %>
+        <h3><%= type.capitalize %> Links (<%= links.length %>)</h3>
+        
+        <% links.each do |link| %>
+          <div class="link-item">
+            <p><strong>Page:</strong> <%= link[:page] %></p>
+            <p><strong>URL:</strong> 
+              <% if link[:uri] =~ URI::regexp || link[:uri].start_with?('mailto:') %>
+                <%= link_to link[:uri], link[:uri], target: '_blank', rel: 'noopener' %>
+              <% else %>
+                <%= link[:uri] %>
+              <% end %>
+            </p>
+            <% if link[:rect] %>
+              <p><strong>Position:</strong> <%= link[:rect].inspect %></p>
+            <% end %>
+            <hr>
+          </div>
+        <% end %>
+      <% end %>
+    </div>
+  <% else %>
+    <div class="no-links-found">
+      <p>No links were found in the PDF. This could mean:</p>
+      <ul>
+        <li>The PDF doesn't contain any clickable links or URLs in the text</li>
+        <li>The links are embedded in images</li>
+        <li>The text is not properly extractable (e.g., scanned document)</li>
+      </ul>
+    </div>
+  <% end %>
+
+  <div class="actions">
+    <%= link_to 'Analyze Another PDF', new_pdf_path, class: 'button' %>
+  </div>
+</div>
