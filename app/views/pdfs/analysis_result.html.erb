@@ -26,9 +26,6 @@
               <%= link["uri"] %>
             <% end %>
           </p>
-          <% if link["rect"] %>
-            <p><strong>Position:</strong> <%= link["rect"].inspect %></p>
-          <% end %>
         </div>
       <% end %>
     <% else %>
@@ -38,11 +35,15 @@
 
   <div id="logs-tab" class="tab-content">
     <div class="analysis-logs">
-      <% @analysis_data["logs"].each do |log| %>
-        <div class="log-entry log-<%= log["level"] %>">
-          <span class="timestamp"><%= log["timestamp"] %></span>
-          <span class="message"><%= log["message"] %></span>
-        </div>
+      <% if @analysis_data["logs"].present? %>
+        <% @analysis_data["logs"].each do |log| %>
+          <div class="log-entry log-<%= log["level"] %>">
+            <span class="timestamp"><%= log["timestamp"] %></span>
+            <span class="message"><%= log["message"] %></span>
+          </div>
+        <% end %>
+      <% else %>
+        <p>No logs available.</p>
       <% end %>
     </div>
   </div>
@@ -150,6 +151,15 @@
       border-radius: 4px;
       text-align: center;
       color: #666;
+    }
+
+    .note {
+      margin: 20px 0;
+      padding: 10px;
+      background-color: #fff3cd;
+      border: 1px solid #ffeeba;
+      border-radius: 4px;
+      color: #856404;
     }
   </style>
 

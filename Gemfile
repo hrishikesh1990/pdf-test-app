@@ -57,3 +57,4 @@ group :test do
 end
 
 gem 'hexapdf', '~> 0.34.0'  # or the latest version
+gem 'pdf-reader', '~> 2.11'

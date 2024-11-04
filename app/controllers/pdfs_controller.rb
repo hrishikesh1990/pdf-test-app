@@ -6,7 +6,7 @@ class PdfsController < ApplicationController
     @analysis_logs << {
       timestamp: timestamp,
       level: level,
-      message: message
+      message: message.to_s[0..200] # Limit message length
     }
     Rails.logger.send(level, message)
   end
@@ -37,12 +37,25 @@ class PdfsController < ApplicationController
       log_message("Processing PDF file: #{params[:pdf].original_filename}")
       @links = extract_pdf_links(params[:pdf].tempfile.path)
       
-      session[:last_analysis] = {
+      # Create a summary of links
+      links_summary = @links.map { |link| {
+        page: link[:page],
+        uri: link[:uri]
+      }}
+
+      # Store analysis ID in session
+      analysis_id = SecureRandom.hex(8)
+      
+      # Save detailed data to temporary file
+      save_analysis_data(analysis_id, {
         links: @links,
         logs: @analysis_logs,
         filename: params[:pdf].original_filename,
-        timestamp: Time.current.to_s  # Store as string
-      }
+        timestamp: Time.current.to_s
+      })
+      
+      # Store minimal data in session
+      session[:analysis_id] = analysis_id
       
       redirect_to analysis_result_pdfs_path
     rescue => e
@@ -53,79 +66,59 @@ class PdfsController < ApplicationController
   end
 
   def analysis_result
-    @analysis_data = session[:last_analysis]
+    analysis_id = session[:analysis_id]
+    
+    unless analysis_id
+      flash[:error] = "No analysis data found. Please upload a PDF."
+      return redirect_to new_pdf_path
+    end
+
+    @analysis_data = load_analysis_data(analysis_id)
     
     unless @analysis_data
-      flash[:error] = "No analysis data found. Please upload a PDF."
-      redirect_to new_pdf_path
+      flash[:error] = "Analysis data has expired. Please try again."
+      return redirect_to new_pdf_path
     end
+
+    render :analysis_result
   end
 
   private
 
   def extract_pdf_links(pdf_path)
-    require 'hexapdf'
+    require 'pdf-reader'
     require 'uri'
     
-    doc = HexaPDF::Document.open(pdf_path)
+    reader = PDF::Reader.new(pdf_path)
     all_links = []
 
-    doc.pages.each_with_index do |page, page_num|
+    reader.pages.each_with_index do |page, page_num|
       log_message("Processing page #{page_num + 1}")
       
-      # Method 1: Check for link annotations
       begin
-        annotations = page[:Annots]&.value || []
-        annotations = annotations.map { |annot| doc.wrap(annot) if annot }
+        # Extract text using pdf-reader
+        text = page.text
+        log_message("Extracted #{text.length} characters from page #{page_num + 1}")
         
-        links = annotations.compact.select { |annot| 
-          annot.type == :Link rescue false 
-        }
-        
-        log_message("Found #{links.length} annotation links on page #{page_num + 1}")
-        
-        links.each do |link|
-          begin
-            uri = if link.action.nil?
-                    'Internal Link'
-                  elsif link.action[:S] == :URI
-                    link.action[:URI]
-                  else
-                    'Internal Link'
-                  end
-            
-            link_data = {
-              page: page_num + 1,
-              type: 'annotation',
-              rect: link[:Rect],
-              uri: uri
-            }
-            all_links << link_data
-          rescue => e
-            log_message("Error processing annotation link: #{e.message}", :error)
-          end
+        if text.empty?
+          log_message("No text extracted from page #{page_num + 1}", :warn)
+          next
         end
-      rescue => e
-        log_message("Error processing annotations on page #{page_num + 1}: #{e.message}", :error)
-      end
 
-      # Method 2: Extract text and look for URL patterns
-      begin
-        # Use process_contents to extract text
-        text = ''
-        processor = HexaPDF::Content::Processor.new do |*args|
-          if args.first == :show_text
-            text << args.last[:string]
-          end
+        # Debug: Show first 100 characters of extracted text
+        log_message("Sample text: #{text[0..100]}")
+        
+        # Look for URLs and email addresses with improved pattern matching
+        urls = text.scan(%r{
+          (?:https?://|www\.)[^\s<>"\{\}\|\\\^\[\]`\s]+|  # Web URLs
+          [a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,} # Email addresses
+        }x)
+        
+        if urls.any?
+          log_message("Found #{urls.length} potential URLs in text")
+          urls.each { |url| log_message("Potential URL found: #{url}") }
         end
-        
-        page.process_contents(processor)
-        
-        log_message("Extracted #{text.length} characters of text from page #{page_num + 1}")
-        
-        # Look for URLs and email addresses
-        urls = text.scan(/(?:https?:\/\/|www\.)[^\s<>"']+|[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/)
-        
+
         urls.each do |url|
           url = url.strip.gsub(/[.,;:]$/, '')
           next unless url =~ URI::regexp(['http', 'https', 'mailto']) || 
@@ -144,26 +137,88 @@ class PdfsController < ApplicationController
                 end
           }
           all_links << link_data
-          log_message("Found text link: #{link_data[:uri]}")
+          log_message("Added text link: #{link_data[:uri]}")
         end
+
+        # Also look for LinkedIn-style URLs that might be split across lines
+        linkedin_matches = text.scan(/linkedin\.com\/(?:in|company)\/[^\s\/]+(?:\/[^\s\/]+)?/)
+        linkedin_matches.each do |match|
+          link_data = {
+            page: page_num + 1,
+            type: 'text',
+            uri: "https://www.#{match}"
+          }
+          all_links << link_data
+          log_message("Added LinkedIn link: #{link_data[:uri]}")
+        end
+
+        # Look for GitHub URLs
+        github_matches = text.scan(/github\.com\/[^\s\/]+(?:\/[^\s\/]+)?/)
+        github_matches.each do |match|
+          link_data = {
+            page: page_num + 1,
+            type: 'text',
+            uri: "https://www.#{match}"
+          }
+          all_links << link_data
+          log_message("Added GitHub link: #{link_data[:uri]}")
+        end
+
       rescue => e
-        log_message("Error extracting text from page #{page_num + 1}: #{e.message}", :error)
+        log_message("Error processing page #{page_num + 1}: #{e.message}", :error)
         log_message("Error details: #{e.backtrace.first(5).join("\n")}", :error)
       end
     end
 
-    log_message("Total links found: #{all_links.length}")
+    # Also try to extract any PDF annotations (clickable links)
+    begin
+      reader.objects.each do |id, obj|
+        next unless obj.is_a?(Hash) && obj[:Type] == :Annot && obj[:Subtype] == :Link
+      
+        if obj[:A] && obj[:A][:URI]
+          link_data = {
+            page: 1, # Note: PDF::Reader makes it harder to determine the page number for annotations
+            type: 'annotation',
+            uri: obj[:A][:URI]
+          }
+          all_links << link_data
+          log_message("Added annotation link: #{link_data[:uri]}")
+        end
+      end
+    rescue => e
+      log_message("Error extracting annotations: #{e.message}", :error)
+    end
+
+    log_message("Analysis complete. Total links found: #{all_links.length}")
     
     if all_links.empty?
-      log_message("No links found in the document. This might mean either:", :warn)
-      log_message("1. The PDF doesn't contain any links", :warn)
-      log_message("2. The links are images or non-selectable text", :warn)
-      log_message("3. The text extraction didn't work properly", :warn)
+      log_message("No links were found. Possible reasons:", :warn)
+      log_message("1. The PDF doesn't contain any clickable links or URLs", :warn)
+      log_message("2. The URLs might be formatted in an unexpected way", :warn)
+      log_message("3. The URLs might be split across lines", :warn)
     end
     
     all_links
   rescue => e
     log_message("PDF extraction error: #{e.full_message}", :error)
     raise "Error processing PDF: #{e.message}"
+  end
+
+  def save_analysis_data(id, data)
+    file_path = Rails.root.join('tmp', 'analysis', "#{id}.json")
+    FileUtils.mkdir_p(File.dirname(file_path))
+    File.write(file_path, data.to_json)
+  end
+
+  def load_analysis_data(id)
+    file_path = Rails.root.join('tmp', 'analysis', "#{id}.json")
+    return nil unless File.exist?(file_path)
+    
+    data = JSON.parse(File.read(file_path))
+    # Delete the file after reading to clean up
+    File.delete(file_path)
+    data
+  rescue
+    nil
   end
 end
