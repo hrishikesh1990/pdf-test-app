@@ -9,6 +9,7 @@
 
   <div class="results-tabs">
     <button class="tab-button active" onclick="showTab('links')">Links Found</button>
+    <button class="tab-button" onclick="showTab('text')">Raw Text</button>
     <button class="tab-button" onclick="showTab('logs')">Analysis Logs</button>
   </div>
 
@@ -30,6 +31,19 @@
       <% end %>
     <% else %>
       <p class="no-results">No links were found in the document.</p>
+    <% end %>
+  </div>
+
+  <div id="text-tab" class="tab-content">
+    <% if @analysis_data["text"].present? %>
+      <% @analysis_data["text"].each do |page| %>
+        <div class="text-page">
+          <h3>Page <%= page["page"] %></h3>
+          <pre class="raw-text"><%= page["content"] %></pre>
+        </div>
+      <% end %>
+    <% else %>
+      <p class="no-results">No text could be extracted from the document.</p>
     <% end %>
   </div>
 
@@ -160,6 +174,24 @@
       border: 1px solid #ffeeba;
       border-radius: 4px;
       color: #856404;
+    }
+
+    .text-page {
+      margin: 20px 0;
+      padding: 15px;
+      border: 1px solid #dee2e6;
+      border-radius: 4px;
+    }
+
+    .raw-text {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: monospace;
+      background: #f8f9fa;
+      padding: 15px;
+      border-radius: 4px;
+      max-height: 400px;
+      overflow-y: auto;
     }
   </style>
 

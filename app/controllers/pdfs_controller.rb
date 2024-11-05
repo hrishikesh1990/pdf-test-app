@@ -35,10 +35,10 @@ class PdfsController < ApplicationController
 
     begin
       log_message("Processing PDF file: #{params[:pdf].original_filename}")
-      @links = extract_pdf_links(params[:pdf].tempfile.path)
+      extraction_results = extract_pdf_links(params[:pdf].tempfile.path)
       
       # Create a summary of links
-      links_summary = @links.map { |link| {
+      links_summary = extraction_results[:links].map { |link| {
         page: link[:page],
         uri: link[:uri]
       }}
@@ -48,7 +48,8 @@ class PdfsController < ApplicationController
       
       # Save detailed data to temporary file
       save_analysis_data(analysis_id, {
-        links: @links,
+        links: extraction_results[:links],
+        text: extraction_results[:text],
         logs: @analysis_logs,
         filename: params[:pdf].original_filename,
         timestamp: Time.current.to_s
@@ -91,14 +92,21 @@ class PdfsController < ApplicationController
     
     reader = PDF::Reader.new(pdf_path)
     all_links = []
+    all_text = []
 
     reader.pages.each_with_index do |page, page_num|
       log_message("Processing page #{page_num + 1}")
       
       begin
-        # Extract text using pdf-reader
-        text = page.text
+        # Extract text using multiple methods and clean it
+        text = extract_and_clean_text(page)
         log_message("Extracted #{text.length} characters from page #{page_num + 1}")
+        
+        # Store text with page number
+        all_text << {
+          page: page_num + 1,
+          content: text
+        }
         
         if text.empty?
           log_message("No text extracted from page #{page_num + 1}", :warn)
@@ -198,9 +206,13 @@ class PdfsController < ApplicationController
       log_message("3. The URLs might be split across lines", :warn)
     end
     
-    all_links
+    # Return both links and text
+    {
+      links: all_links,
+      text: all_text
+    }
   rescue => e
-    log_message("PDF extraction error: #{e.full_message}", :error)
+    log_message("PDF extraction error: #{e.message}", :error)
     raise "Error processing PDF: #{e.message}"
   end
 
@@ -220,5 +232,72 @@ class PdfsController < ApplicationController
     data
   rescue
     nil
+  end
+
+  def extract_and_clean_text(page)
+    # Method 1: Standard text extraction
+    standard_text = page.text
+
+    # Method 2: Extract text using raw content stream
+    raw_text = extract_from_raw_content(page)
+
+    # Choose the better result or combine them
+    text = choose_better_text(standard_text, raw_text)
+
+    # Clean and format the text
+    clean_text(text)
+  end
+
+  def extract_from_raw_content(page)
+    text = ""
+    return text unless page.raw_content
+
+    # Process each text showing operation in the content stream
+    page.raw_content.split(/\[(.*?)\]TJ/).each do |chunk|
+      # Convert hex characters to regular text
+      chunk.gsub!(/\<([0-9A-Fa-f]+)\>/) { [$1].pack("H*") }
+      # Remove PDF operators and other non-text elements
+      chunk.gsub!(/[\/\\\(\)\[\]\{\}]/, " ")
+      text << chunk
+    end
+    text
+  end
+
+  def choose_better_text(text1, text2)
+    # Choose the text that appears more properly formatted
+    # This is a simple heuristic - you might want to adjust it
+    score1 = text_quality_score(text1)
+    score2 = text_quality_score(text2)
+    
+    score1 > score2 ? text1 : text2
+  end
+
+  def text_quality_score(text)
+    return 0 if text.nil? || text.empty?
+    
+    score = 0
+    # More spaces between words is usually better
+    score += text.count(' ') * 2
+    # More newlines usually indicates better paragraph separation
+    score += text.count("\n")
+    # Penalize runs of special characters
+    score -= text.scan(/[^a-zA-Z0-9\s]{3,}/).count * 5
+    # Penalize missing spaces after periods
+    score -= text.scan(/\.[a-zA-Z]/).count * 3
+    
+    score
+  end
+
+  def clean_text(text)
+    return "" if text.nil? || text.empty?
+    
+    text
+      .gsub(/\s+/, ' ')                    # Normalize whitespace
+      .gsub(/([.!?])\s*([A-Z])/, '\1 \2')  # Ensure space after sentences
+      .gsub(/([a-z])([A-Z])/, '\1 \2')     # Add space between camelCase
+      .gsub(/\b([A-Z]+)\b(?=[a-z])/, ' \1') # Space before acronyms
+      .gsub(/\s+/, ' ')                    # Final whitespace cleanup
+      .gsub(/(\d+)\.(\d+)/, '\1. \2')      # Fix decimal numbers
+      .strip
   end
 end
