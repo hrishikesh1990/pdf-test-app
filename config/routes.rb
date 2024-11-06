@@ -21,4 +21,14 @@ Rails.application.routes.draw do
 
   # Optional: Add root route
   root 'pdfs#new'
+
+  namespace :api do
+    namespace :v1 do
+      resources :pdfs, only: [] do
+        collection do
+          post 'analyze'
+        end
+      end
+    end
+  end
 end
