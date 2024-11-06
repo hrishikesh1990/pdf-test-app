@@ -35,16 +35,75 @@
   </div>
 
   <div id="text-tab" class="tab-content">
-    <% if @analysis_data["text"].present? %>
-      <% @analysis_data["text"].each do |page| %>
-        <div class="text-page">
-          <h3>Page <%= page["page"] %></h3>
-          <pre class="raw-text"><%= page["content"] %></pre>
-        </div>
-      <% end %>
-    <% else %>
-      <p class="no-results">No text could be extracted from the document.</p>
-    <% end %>
+    <div class="text-controls">
+      <button onclick="toggleWordWrap()">Toggle Word Wrap</button>
+      <label>Font Size: <input type="range" min="12" max="24" value="14" onchange="adjustFontSize(this.value)"></label>
+    </div>
+
+    <div class="extraction-methods">
+      <div class="method-selector">
+        <label>
+          <input type="radio" name="extraction-method" value="pdf-reader" checked onchange="switchMethod(this.value)">
+          PDF::Reader Extraction
+        </label>
+        <label>
+          <input type="radio" name="extraction-method" value="poppler" onchange="switchMethod(this.value)">
+          Poppler Extraction
+        </label>
+      </div>
+
+      <div id="pdf-reader-content" class="method-content">
+        <h3>PDF::Reader Extraction</h3>
+        <% if @analysis_data && @analysis_data["pdf_reader_text"] %>
+          <% @analysis_data["pdf_reader_text"].each do |page| %>
+            <div class="text-page">
+              <h4>Page <%= page[:page] || page["page"] %></h4>
+              <% if page[:error] || page["error"] %>
+                <div class="error-message">
+                  Error: <%= page[:error] || page["error"] %>
+                </div>
+              <% elsif (page[:content] || page["content"]).blank? %>
+                <div class="warning-message">
+                  No text extracted from this page
+                </div>
+              <% else %>
+                <pre class="raw-text"><%= page[:content] || page["content"] %></pre>
+              <% end %>
+            </div>
+          <% end %>
+        <% else %>
+          <div class="error-message">
+            No text extracted using PDF::Reader
+          </div>
+        <% end %>
+      </div>
+
+      <div id="poppler-content" class="method-content" style="display: none;">
+        <h3>Poppler Extraction</h3>
+        <% if @analysis_data && @analysis_data["poppler_text"] %>
+          <% @analysis_data["poppler_text"].each do |page| %>
+            <div class="text-page">
+              <h4>Page <%= page[:page] || page["page"] %></h4>
+              <% if page[:error] || page["error"] %>
+                <div class="error-message">
+                  Error: <%= page[:error] || page["error"] %>
+                </div>
+              <% elsif (page[:content] || page["content"]).blank? %>
+                <div class="warning-message">
+                  No text extracted from this page
+                </div>
+              <% else %>
+                <pre class="raw-text"><%= page[:content] || page["content"] %></pre>
+              <% end %>
+            </div>
+          <% end %>
+        <% else %>
+          <div class="error-message">
+            No text extracted using Poppler
+          </div>
+        <% end %>
+      </div>
+    </div>
   </div>
 
   <div id="logs-tab" class="tab-content">
@@ -192,6 +251,127 @@
       border-radius: 4px;
       max-height: 400px;
       overflow-y: auto;
+      font-size: 14px;
+      line-height: 1.5;
+      margin: 0;
+    }
+
+    .text-controls {
+      margin-bottom: 20px;
+      padding: 10px;
+      background: #f8f9fa;
+      border-radius: 4px;
+    }
+    
+    .text-controls button {
+      margin-right: 10px;
+      padding: 5px 10px;
+    }
+    
+    .method-toggle {
+      margin: 20px 0;
+      padding: 10px;
+      background: #f8f9fa;
+      border-radius: 4px;
+    }
+    
+    .method-toggle label {
+      margin-right: 20px;
+    }
+    
+    .text-comparison {
+      display: flex;
+      gap: 20px;
+      margin-top: 10px;
+    }
+    
+    .text-method {
+      flex: 1;
+      padding: 15px;
+      background: #fff;
+      border: 1px solid #dee2e6;
+      border-radius: 4px;
+    }
+    
+    .text-method h4 {
+      margin-top: 0;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #dee2e6;
+    }
+
+    .method-selector {
+      margin: 20px 0;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 4px;
+    }
+    
+    .method-selector label {
+      margin-right: 20px;
+    }
+    
+    .raw-text {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: monospace;
+      background: #f8f9fa;
+      padding: 15px;
+      border-radius: 4px;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    
+    .error-message {
+      color: #dc3545;
+      padding: 10px;
+      background: #f8d7da;
+      border-radius: 4px;
+      margin-bottom: 10px;
+    }
+    
+    .warning-message {
+      color: #856404;
+      padding: 10px;
+      background: #fff3cd;
+      border-radius: 4px;
+      margin-bottom: 10px;
+    }
+
+    .debug-info {
+      font-family: monospace;
+      font-size: 12px;
+      color: #666;
+      margin-top: 5px;
+    }
+
+    .links-summary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 20px 0;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 4px;
+    }
+
+    .link-type-count {
+      padding: 5px 10px;
+      background: #e9ecef;
+      border-radius: 4px;
+      font-size: 0.9em;
+    }
+
+    .link-section {
+      margin: 20px 0;
+      padding: 15px;
+      border: 1px solid #dee2e6;
+      border-radius: 4px;
+    }
+
+    .link-section h3 {
+      margin-top: 0;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #dee2e6;
     }
   </style>
 
@@ -208,6 +388,51 @@
       // Show selected tab
       document.getElementById(tabName + '-tab').classList.add('active');
       event.target.classList.add('active');
+    }
+
+    function toggleWordWrap() {
+      document.querySelectorAll('.raw-text').forEach(el => {
+        el.style.whiteSpace = el.style.whiteSpace === 'pre-wrap' ? 'pre' : 'pre-wrap';
+      });
+    }
+
+    function toggleParagraphView() {
+      document.querySelectorAll('.raw-text').forEach(el => {
+        const text = el.dataset.originalText;
+        if (el.style.whiteSpace === 'pre') {
+          el.textContent = text.replace(/\n\s*\n/g, '\n').replace(/\n/g, ' ');
+        } else {
+          el.textContent = text;
+        }
+      });
+    }
+
+    function adjustFontSize(size) {
+      document.querySelectorAll('.raw-text').forEach(el => {
+        el.style.fontSize = size + 'px';
+      });
+    }
+
+    function toggleMethod(method) {
+      const checkbox = document.getElementById(`toggle-${method}`);
+      const elements = document.querySelectorAll(`.${method}-method`);
+      elements.forEach(el => {
+        el.style.display = checkbox.checked ? 'block' : 'none';
+      });
+      
+      // Adjust flex layout if only one method is visible
+      const containers = document.querySelectorAll('.text-comparison');
+      containers.forEach(container => {
+        const visibleMethods = container.querySelectorAll('.text-method[style="display: block"]').length;
+        container.style.display = visibleMethods === 0 ? 'none' : 'flex';
+      });
+    }
+
+    function switchMethod(method) {
+      document.getElementById('pdf-reader-content').style.display = 
+        method === 'pdf-reader' ? 'block' : 'none';
+      document.getElementById('poppler-content').style.display = 
+        method === 'poppler' ? 'block' : 'none';
     }
   </script>
 <% end %>

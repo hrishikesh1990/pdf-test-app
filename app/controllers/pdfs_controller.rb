@@ -37,27 +37,20 @@ class PdfsController < ApplicationController
       log_message("Processing PDF file: #{params[:pdf].original_filename}")
       extraction_results = extract_pdf_links(params[:pdf].tempfile.path)
       
-      # Create a summary of links
-      links_summary = extraction_results[:links].map { |link| {
-        page: link[:page],
-        uri: link[:uri]
-      }}
-
       # Store analysis ID in session
       analysis_id = SecureRandom.hex(8)
       
       # Save detailed data to temporary file
       save_analysis_data(analysis_id, {
         links: extraction_results[:links],
-        text: extraction_results[:text],
+        pdf_reader_text: extraction_results[:pdf_reader_text],
+        poppler_text: extraction_results[:poppler_text],
         logs: @analysis_logs,
         filename: params[:pdf].original_filename,
         timestamp: Time.current.to_s
       })
       
-      # Store minimal data in session
       session[:analysis_id] = analysis_id
-      
       redirect_to analysis_result_pdfs_path
     rescue => e
       log_message("Error analyzing PDF: #{e.message}", :error)
@@ -70,43 +63,83 @@ class PdfsController < ApplicationController
     analysis_id = session[:analysis_id]
     
     unless analysis_id
-      flash[:error] = "No analysis data found. Please upload a PDF."
+      flash[:error] = "No analysis data found"
       return redirect_to new_pdf_path
     end
 
-    @analysis_data = load_analysis_data(analysis_id)
-    
-    unless @analysis_data
-      flash[:error] = "Analysis data has expired. Please try again."
-      return redirect_to new_pdf_path
+    begin
+      @analysis_data = load_analysis_data(analysis_id)
+      
+      # Debug logging
+      Rails.logger.debug "Loaded analysis data: #{@analysis_data.keys}"
+      Rails.logger.debug "PDF Reader text pages: #{@analysis_data['pdf_reader_text']&.size}"
+      Rails.logger.debug "Poppler text pages: #{@analysis_data['poppler_text']&.size}"
+      
+      unless @analysis_data
+        flash[:error] = "Analysis data not found"
+        return redirect_to new_pdf_path
+      end
+    rescue => e
+      Rails.logger.error "Error loading analysis data: #{e.message}"
+      flash[:error] = "Error loading analysis data"
+      redirect_to new_pdf_path
     end
-
-    render :analysis_result
   end
 
   private
 
+  def extract_pdf_text(pdf_path)
+    require 'pdf-reader'
+    require 'poppler'
+    
+    log_message("Starting PDF extraction with PDF::Reader")
+    pdf_reader_text = extract_with_pdf_reader(pdf_path)
+    log_message("PDF::Reader extracted #{pdf_reader_text.sum { |p| p[:content].to_s.length }} characters")
+    
+    log_message("Starting PDF extraction with Poppler") 
+    poppler_text = extract_with_poppler(pdf_path)
+    log_message("Poppler extracted #{poppler_text.sum { |p| p[:content].to_s.length }} characters")
+
+    # Add debug logging for the text content
+    pdf_reader_text.each do |page|
+      log_message("=== Page #{page[:page]} Content Preview ===")
+      log_message(page[:content][0..200]) # First 200 characters
+      if contains_profile_keywords?(page[:content])
+        log_message("Found profile-related keywords on page #{page[:page]}")
+      end
+    end
+
+    {
+      pdf_reader_text: pdf_reader_text,
+      poppler_text: poppler_text
+    }
+  end
+
   def extract_pdf_links(pdf_path)
     require 'pdf-reader'
     require 'uri'
+    require 'poppler'
     
+    # Extract text using both methods
+    log_message("Starting PDF extraction with PDF::Reader")
+    pdf_reader_text = extract_with_pdf_reader(pdf_path)
+    log_message("PDF::Reader extracted #{pdf_reader_text.sum { |p| p[:content].to_s.length }} characters")
+    
+    log_message("Starting PDF extraction with Poppler")
+    poppler_text = extract_with_poppler(pdf_path)
+    log_message("Poppler extracted #{poppler_text.sum { |p| p[:content].to_s.length }} characters")
+
+    # Extract links using the working method
     reader = PDF::Reader.new(pdf_path)
     all_links = []
-    all_text = []
 
     reader.pages.each_with_index do |page, page_num|
       log_message("Processing page #{page_num + 1}")
       
       begin
-        # Extract text using multiple methods and clean it
-        text = extract_and_clean_text(page)
+        # Extract text using pdf-reader
+        text = page.text
         log_message("Extracted #{text.length} characters from page #{page_num + 1}")
-        
-        # Store text with page number
-        all_text << {
-          page: page_num + 1,
-          content: text
-        }
         
         if text.empty?
           log_message("No text extracted from page #{page_num + 1}", :warn)
@@ -153,7 +186,7 @@ class PdfsController < ApplicationController
         linkedin_matches.each do |match|
           link_data = {
             page: page_num + 1,
-            type: 'text',
+            type: 'linkedin',
             uri: "https://www.#{match}"
           }
           all_links << link_data
@@ -165,7 +198,7 @@ class PdfsController < ApplicationController
         github_matches.each do |match|
           link_data = {
             page: page_num + 1,
-            type: 'text',
+            type: 'github',
             uri: "https://www.#{match}"
           }
           all_links << link_data
@@ -206,14 +239,76 @@ class PdfsController < ApplicationController
       log_message("3. The URLs might be split across lines", :warn)
     end
     
-    # Return both links and text
     {
       links: all_links,
-      text: all_text
+      pdf_reader_text: pdf_reader_text,
+      poppler_text: poppler_text
     }
   rescue => e
-    log_message("PDF extraction error: #{e.message}", :error)
+    log_message("PDF extraction error: #{e.full_message}", :error)
     raise "Error processing PDF: #{e.message}"
+  end
+
+  def extract_with_pdf_reader(pdf_path)
+    text_by_page = []
+    reader = PDF::Reader.new(pdf_path)
+    
+    reader.pages.each_with_index do |page, page_num|
+      begin
+        text = page.text.to_s
+        log_message("PDF::Reader - Page #{page_num + 1}: extracted #{text.length} characters")
+        
+        text_by_page << {
+          page: page_num + 1,
+          content: text
+        }
+      rescue => e
+        log_message("PDF::Reader error on page #{page_num + 1}: #{e.message}", :warn)
+        text_by_page << {
+          page: page_num + 1,
+          content: "",
+          error: e.message
+        }
+      end
+    end
+    
+    text_by_page
+  end
+
+  def extract_with_poppler(pdf_path)
+    text_by_page = []
+    
+    begin
+      doc = Poppler::Document.new(pdf_path)
+      
+      doc.each_with_index do |page, page_num|
+        begin
+          text = page.get_text
+          log_message("Poppler - Page #{page_num + 1}: extracted #{text.length} characters")
+          
+          text_by_page << {
+            page: page_num + 1,
+            content: text
+          }
+        rescue => e
+          log_message("Poppler error on page #{page_num + 1}: #{e.message}", :warn)
+          text_by_page << {
+            page: page_num + 1,
+            content: "",
+            error: e.message
+          }
+        end
+      end
+    rescue => e
+      log_message("Poppler initialization error: #{e.message}", :error)
+      text_by_page << {
+        page: 1,
+        content: "",
+        error: "Failed to initialize Poppler: #{e.message}"
+      }
+    end
+    
+    text_by_page
   end
 
   def save_analysis_data(id, data)
@@ -234,70 +329,186 @@ class PdfsController < ApplicationController
     nil
   end
 
-  def extract_and_clean_text(page)
-    # Method 1: Standard text extraction
-    standard_text = page.text
-
-    # Method 2: Extract text using raw content stream
-    raw_text = extract_from_raw_content(page)
-
-    # Choose the better result or combine them
-    text = choose_better_text(standard_text, raw_text)
-
-    # Clean and format the text
-    clean_text(text)
-  end
-
   def extract_from_raw_content(page)
     text = ""
     return text unless page.raw_content
 
-    # Process each text showing operation in the content stream
-    page.raw_content.split(/\[(.*?)\]TJ/).each do |chunk|
-      # Convert hex characters to regular text
-      chunk.gsub!(/\<([0-9A-Fa-f]+)\>/) { [$1].pack("H*") }
-      # Remove PDF operators and other non-text elements
-      chunk.gsub!(/[\/\\\(\)\[\]\{\}]/, " ")
-      text << chunk
+    begin
+      page.raw_content.split(/\[(.*?)\]TJ/).each do |chunk|
+        # Convert hex characters to regular text
+        chunk.gsub!(/\<([0-9A-Fa-f]+)\>/) { [$1].pack("H*") }
+        # Remove PDF operators and other non-text elements
+        chunk.gsub!(/[\/\\\(\)\[\]\{\}]/, " ")
+        text << chunk
+      end
+    rescue => e
+      log_message("Error in raw content extraction: #{e.message}", :warn)
     end
-    text
-  end
-
-  def choose_better_text(text1, text2)
-    # Choose the text that appears more properly formatted
-    # This is a simple heuristic - you might want to adjust it
-    score1 = text_quality_score(text1)
-    score2 = text_quality_score(text2)
     
-    score1 > score2 ? text1 : text2
-  end
-
-  def text_quality_score(text)
-    return 0 if text.nil? || text.empty?
-    
-    score = 0
-    # More spaces between words is usually better
-    score += text.count(' ') * 2
-    # More newlines usually indicates better paragraph separation
-    score += text.count("\n")
-    # Penalize runs of special characters
-    score -= text.scan(/[^a-zA-Z0-9\s]{3,}/).count * 5
-    # Penalize missing spaces after periods
-    score -= text.scan(/\.[a-zA-Z]/).count * 3
-    
-    score
+    handle_encoding(text)
   end
 
   def clean_text(text)
     return "" if text.nil? || text.empty?
     
-    text
-      .gsub(/\s+/, ' ')                    # Normalize whitespace
-      .gsub(/([.!?])\s*([A-Z])/, '\1 \2')  # Ensure space after sentences
-      .gsub(/([a-z])([A-Z])/, '\1 \2')     # Add space between camelCase
-      .gsub(/\b([A-Z]+)\b(?=[a-z])/, ' \1') # Space before acronyms
-      .gsub(/\s+/, ' ')                    # Final whitespace cleanup
-      .gsub(/(\d+)\.(\d+)/, '\1. \2')      # Fix decimal numbers
-      .strip
+    handle_encoding(
+      text
+        .gsub(/\s+/, ' ')                    # Normalize whitespace
+        .gsub(/([.!?])\s*([A-Z])/, '\1 \2')  # Ensure space after sentences
+        .gsub(/([a-z])([A-Z])/, '\1 \2')     # Add space between camelCase
+        .gsub(/\b([A-Z]+)\b(?=[a-z])/, ' \1') # Space before acronyms
+        .gsub(/\s+/, ' ')                    # Final whitespace cleanup
+        .gsub(/(\d+)\.(\d+)/, '\1. \2')      # Fix decimal numbers
+        .strip
+    )
+  end
+
+  def handle_encoding(text)
+    # Try UTF-8 first
+    text.encode('UTF-8', 'UTF-8', invalid: :replace, undef: :replace, replace: '')
+  rescue
+    begin
+      # Try Windows-1252 (common in PDFs)
+      text.encode('UTF-8', 'Windows-1252', invalid: :replace, undef: :replace, replace: '')
+    rescue
+      begin
+        # Try ISO-8859-1
+        text.encode('UTF-8', 'ISO-8859-1', invalid: :replace, undef: :replace, replace: '')
+      rescue
+        # Last resort: remove any non-ASCII characters
+        text.encode('UTF-8', 'ASCII', invalid: :replace, undef: :replace, replace: '')
+      end
+    end
+  end
+
+  def extract_links_from_text(text, page_num, all_links)
+    return if text.nil? || text.empty?
+
+    # Extract LinkedIn URLs (more permissive pattern)
+    linkedin_matches = text.scan(%r{
+      (?:https?://)?
+      (?:www\.)?
+      linkedin\.com/
+      (?:in|company|profile)/
+      [^\s<>(),]+
+    }x)
+    
+    linkedin_matches.each do |match|
+      match = clean_url(match)
+      log_message("Found LinkedIn URL: #{match}")
+      all_links << {
+        page: page_num,
+        type: 'linkedin',
+        uri: ensure_https(match)
+      }
+    end
+
+    # Extract GitHub URLs (more permissive pattern)
+    github_matches = text.scan(%r{
+      (?:https?://)?
+      (?:www\.)?
+      github\.com/
+      [^\s<>(),]+
+    }x)
+    
+    github_matches.each do |match|
+      match = clean_url(match)
+      log_message("Found GitHub URL: #{match}")
+      all_links << {
+        page: page_num,
+        type: 'github',
+        uri: ensure_https(match)
+      }
+    end
+
+    # Extract StackOverflow URLs
+    stackoverflow_matches = text.scan(%r{
+      (?:https?://)?
+      (?:www\.)?
+      stackoverflow\.com/
+      (?:users|questions|answers|a|q)/
+      [^\s<>(),]+
+    }x)
+    
+    stackoverflow_matches.each do |match|
+      match = clean_url(match)
+      log_message("Found StackOverflow URL: #{match}")
+      all_links << {
+        page: page_num,
+        type: 'stackoverflow',
+        uri: ensure_https(match)
+      }
+    end
+
+    # Extract email addresses (improved pattern)
+    emails = text.scan(/[\w\.-]+@[\w\.-]+\.\w+/)
+    emails.each do |email|
+      email = email.strip
+      log_message("Found email: #{email}")
+      all_links << {
+        page: page_num,
+        type: 'email',
+        uri: "mailto:#{email}"
+      }
+    end
+
+    # Extract other URLs
+    urls = text.scan(%r{
+      (?:https?://)?
+      (?:www\.)?
+      [a-zA-Z0-9-]+
+      (?:\.[a-zA-Z0-9-]+)*
+      \.[a-zA-Z]{2,}
+      (?:/[^\s<>(),]*)?
+    }x)
+    
+    urls.each do |url|
+      url = clean_url(url)
+      next if url.match?(/\.(png|jpg|jpeg|gif|pdf|doc|docx)$/i) # Skip file extensions
+      next if url.match?(/linkedin\.com|github\.com|stackoverflow\.com/i) # Skip already processed domains
+      
+      log_message("Found URL: #{url}")
+      all_links << {
+        page: page_num,
+        type: 'url',
+        uri: ensure_https(url)
+      }
+    end
+  end
+
+  def clean_url(url)
+    url.strip
+         .gsub(/[.,;:)]$/, '') # Remove trailing punctuation
+         .gsub(/[<>()]/, '')   # Remove brackets/parentheses
+         .split(/[\s\n\r]+/)   # Split on whitespace
+         .first                # Take first part
+         .to_s
+  end
+
+  def ensure_https(url)
+    return url if url.start_with?('http')
+    return "https://#{url}" if url.include?('.')
+    url
+  end
+
+  # Also add this helper method to check if text contains specific keywords
+  def contains_profile_keywords?(text)
+    keywords = [
+      'github', 'linkedin', 'stack overflow', 'stackoverflow',
+      'profile', 'connect', 'follow me', 'portfolio',
+      'projects', 'repositories', 'contributions'
+    ]
+    
+    keywords.any? { |keyword| text.downcase.include?(keyword) }
+  end
+
+  def categorize_link(uri)
+    case uri.downcase
+    when /linkedin\.com/ then 'linkedin'
+    when /github\.com/ then 'github'
+    when /stackoverflow\.com/ then 'stackoverflow'
+    when /mailto:/ then 'email'
+    else 'url'
+    end
   end
 end
