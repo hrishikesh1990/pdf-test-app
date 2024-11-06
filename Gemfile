@@ -56,6 +56,6 @@ group :test do
   gem "selenium-webdriver"
 end
 
-gem 'hexapdf', '~> 0.34.0'  # or the latest version
+gem 'hexapdf', '~> 1.0.2'   # or the latest version
 gem 'pdf-reader', '~> 2.11'
 gem 'poppler' # For alternative PDF text extraction

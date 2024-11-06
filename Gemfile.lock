@@ -123,7 +123,7 @@ GEM
     gobject-introspection (4.2.4)
       glib2 (= 4.2.4)
     hashery (2.1.2)
-    hexapdf (0.34.1)
+    hexapdf (1.0.2)
       cmdparse (~> 3.0, >= 3.0.3)
       geom2d (~> 0.4, >= 0.4.1)
       openssl (>= 2.2.1)
@@ -352,7 +352,7 @@ DEPENDENCIES
   brakeman
   capybara
   debug
-  hexapdf (~> 0.34.0)
+  hexapdf (~> 1.0.2)
   importmap-rails
   jbuilder
   pdf-reader (~> 2.11)
